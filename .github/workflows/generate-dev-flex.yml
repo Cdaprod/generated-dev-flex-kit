@@ -1,0 +1,75 @@
+name: Generate Personal Dev Flex
+on:
+  fork:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: 'Your preferred color theme'
+        required: false
+        default: 'tokyo-night'
+      expertise:
+        description: 'Your main programming expertise'
+        required: false
+        default: 'python'
+      github_username:
+        description: 'Your GitHub username'
+        required: false
+
+jobs:
+  generate-personal-content:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Get User Info
+        id: user
+        run: |
+          USERNAME="${{ github.event.inputs.github_username || github.actor }}"
+          echo "username=$USERNAME" >> $GITHUB_OUTPUT
+          
+          # Fetch user's top languages
+          LANGS=$(curl -s "https://api.github.com/users/$USERNAME/repos" | \
+                 jq -r '.[].language' | sort | uniq -c | sort -nr | \
+                 head -5 | awk '{print $2}' | jq -R -s -c 'split("\n")[:-1]')
+          echo "languages=$LANGS" >> $GITHUB_OUTPUT
+          
+          # Get user's total contributions
+          CONTRIBUTIONS=$(curl -s "https://api.github.com/users/$USERNAME" | \
+                         jq '.public_repos + .public_gists')
+          echo "contributions=$CONTRIBUTIONS" >> $GITHUB_OUTPUT
+
+      - name: Generate Personal Config
+        run: python .github/scripts/generate_config.py
+        env:
+          USER_INFO: ${{ toJSON(steps.user.outputs) }}
+          THEME: ${{ github.event.inputs.theme }}
+
+      - name: Record Personal Scenes
+        run: python .github/scripts/record_personal_scenes.py
+
+      - name: Generate Stats Visualization
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+      - run: |
+          cd .github/scripts
+          npm install d3
+          node generate_stats_viz.js
+        env:
+          USER_DATA: ${{ toJSON(steps.user.outputs) }}
+
+      - name: Create Personal README
+        run: |
+          python .github/scripts/generate_readme.py
+        env:
+          USER_INFO: ${{ toJSON(steps.user.outputs) }}
+
+      - name: Commit Personal Content
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "🎨 Generated personal dev environment [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
